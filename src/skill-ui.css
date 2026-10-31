@@ -1,0 +1,37 @@
+/* Skill editor and accessible project status switches */
+.skill-modal-backdrop{padding:28px;overflow-y:auto;align-items:center}
+.skill-modal{width:min(100%,650px);max-height:min(92vh,850px);overflow-y:auto;padding:27px 30px 24px;scrollbar-width:thin;scrollbar-color:#49415f transparent}
+.skill-modal-top,.skill-modal-brand,.instructions-label-row{display:flex;align-items:center}
+.skill-modal-top{justify-content:space-between;gap:16px}
+.skill-modal-brand{gap:13px}
+.skill-modal-brand h2{margin:4px 0 0;font:750 21px Manrope,sans-serif;letter-spacing:-.5px}
+.skill-modal-kicker{font-size:9px;font-weight:800;letter-spacing:1.3px;color:#aa95f5}
+.skill-modal>.modal-description{margin:17px 0 23px;line-height:1.65;max-width:540px}
+.skill-form-grid{display:grid;grid-template-columns:1.35fr .85fr;gap:14px}
+.skill-form-field{display:flex;flex-direction:column;gap:7px;margin-bottom:17px;min-width:0}
+.skill-form-field .field-label{margin:0;color:#d8d8e4;font-size:11px}
+.skill-text-input,.skill-textarea{width:100%;border:1px solid #343746;border-radius:9px;background:#10131b;color:#ececf5;outline:0;font:12px 'DM Sans',sans-serif;transition:border-color .18s,box-shadow .18s}
+.skill-text-input{height:42px;padding:0 12px}
+.skill-text-input:focus,.skill-textarea:focus{border-color:#9276f4;box-shadow:0 0 0 3px #9276f41a}
+.skill-text-input::placeholder,.skill-textarea::placeholder{color:#656a7b}
+.skill-text-input option{background:#171a23;color:#eee}
+.skill-form-field>small{font-size:9px;color:#777d8f;line-height:1.5}
+.instructions-label-row{justify-content:space-between}
+.instructions-label-row>span{font-size:8px;letter-spacing:1px;color:#9a8bc9;border:1px solid #39334e;background:#211d30;border-radius:5px;padding:4px 6px}
+.skill-textarea{display:block;resize:vertical;min-height:190px;padding:12px;line-height:1.65;font:11px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace}
+.skill-modal-tip{display:flex;align-items:flex-start;gap:10px;padding:12px 13px;border:1px solid #34304a;background:#1c1a29;border-radius:9px;color:#bbaafa;font-size:10px;line-height:1.6}
+.skill-modal-tip svg{flex-shrink:0;margin-top:1px}
+.skill-modal-tip strong{color:#e2dcf7}
+.skill-modal .modal-actions{margin-top:21px;padding-top:17px;border-top:1px solid #2b2e3a}
+.project-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.project-switch>span{font-size:9px;font-weight:650;min-width:43px;text-align:right;color:#9a9eae}
+.project-switch>input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.project-switch>i{position:relative;display:block;width:34px;height:19px;border-radius:20px;background:#343846;border:1px solid #454a5b;transition:background .18s,border-color .18s;flex-shrink:0}
+.project-switch>i:after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#a3a6b4;transition:transform .18s,background .18s;box-shadow:0 1px 3px #0006}
+.project-switch.is-on>i{background:#285b48;border-color:#3e9b72}
+.project-switch.is-on>i:after{transform:translateX(15px);background:#a3f0c7}
+.project-switch.is-on>span{color:#85d8ad}
+.project-switch>input:focus-visible+i{outline:2px solid #aa95f5;outline-offset:3px}
+.project-switch>input:disabled+i{opacity:.45;cursor:not-allowed}
+.project-switch:has(input:disabled){cursor:not-allowed;opacity:.7}
+@media(max-width:600px){.skill-modal-backdrop{padding:12px}.skill-modal{padding:20px 17px}.skill-form-grid{grid-template-columns:1fr;gap:0}.skill-modal-brand h2{font-size:18px}}

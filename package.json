@@ -1,7 +1,9 @@
 {
   "name": "jecbridge-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0",
+  "description": "Connect local projects to AI tools through MCP from one desktop workspace.",
+  "author": "JecBridge",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -14,8 +16,10 @@
     "electron:build": "npm run icons:build && npm run build && electron-builder --win nsis"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "jecbridge": "^0.9.0",
     "lucide-react": "^1.64.0",
+    "node": "22.23.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
@@ -40,8 +44,16 @@
     "wait-on": "^9.5.1"
   },
   "build": {
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sanakulovme",
+        "repo": "JecBridge-Desktop"
+      }
+    ],
     "appId": "com.jecbridge.desktop",
     "productName": "JecBridge Desktop",
+    "artifactName": "JecBridge-Desktop-Setup-${version}.${ext}",
     "directories": {
       "output": "release"
     },

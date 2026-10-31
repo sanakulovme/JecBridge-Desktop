@@ -8,6 +8,15 @@ JecBridge Desktop is an Electron application for managing local project folders 
 
 ---
 
+## What's new in 2.0.0
+
+- Global My Skills library with create, import, edit, delete, and per-project assignment.
+- Project enable/disable controls and clearer command-access settings.
+- Improved project and skill management interface.
+- GitHub Releases-based update checks and in-app update installation.
+
+See [CHANGELOG.md](CHANGELOG.md) for the release notes.
+
 ## Features
 
 - **Local project workspace** — add, search, and manage project folders from one place.
@@ -17,6 +26,7 @@ JecBridge Desktop is an Electron application for managing local project folders 
 - **Persistent project list** — project entries are saved in the desktop app's local user data.
 - **Runtime and system details** — check app, Electron, Node.js, and platform information.
 - **Windows installer** — package the desktop app as a Windows NSIS installer.
+- **In-app updates** — check GitHub Releases, download updates, and install them from Settings.
 - **SVG-based branding** — the app uses the SVG artwork as its source of truth and generates multi-resolution ICO assets for Windows.
 
 ## How it works
@@ -32,18 +42,16 @@ The endpoint is a secret access link. Do not publish it, commit it to source con
 
 ## Requirements
 
-- **Node.js 22 or newer** — required by the JecBridge CLI.
-- **npm** — used for installing dependencies and running project scripts.
-- **Windows 10/11 (x64)** — the current packaging target.
+- **Windows 10/11 (x64)** — the current packaged-app target.
 
-The desktop application bundles the JecBridge CLI dependency. A compatible Node.js runtime must still be available on the system to run the CLI.
+The Windows installer includes the JecBridge CLI and its Node.js 22 runtime. End users do not need to install Node.js, npm, Git, or any development tools. Node.js and npm are only needed when building the application from source.
 
 ## Getting started
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-account>/JecBridge-Desktop.git
+git clone https://github.com/sanakulovme/JecBridge-Desktop.git
 cd JecBridge-Desktop
 ```
 

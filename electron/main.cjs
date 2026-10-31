@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const { spawn, execFile } = require('node:child_process')
 const { promisify } = require('node:util')
 const execFileAsync = promisify(execFile)
@@ -10,24 +11,10 @@ const isDev = !app.isPackaged
 let mainWindow
 const processes = new Map()
 const storePath = () => path.join(app.getPath('userData'), 'projects.json')
+const skillsRoot = () => path.join(app.getPath('userData'), 'skills')
+const registryPath = () => path.join(skillsRoot(), 'registry.json')
 
-async function assertSupportedNode(nodeCommand) {
-  let stdout
-  try {
-    ({ stdout } = await execFileAsync(nodeCommand, ['--version'], {
-      windowsHide: true,
-      timeout: 5000,
-    }))
-  } catch {
-    throw new Error('Node.js was not found. Install Node.js 22 or newer, then restart JecBridge Desktop.')
-  }
 
-  const version = String(stdout).trim()
-  const major = Number(version.replace(/^v/, '').split('.')[0]) || 0
-  if (major < 22) {
-    throw new Error(`Node.js ${version || 'version unknown'} is not supported. JecBridge requires Node.js 22 or newer.`)
-  }
-}
 
 async function terminateProcessTree(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
@@ -67,7 +54,84 @@ async function readProjects() {
 
 async function writeProjects(projects) {
   await fs.mkdir(path.dirname(storePath()), { recursive: true })
-  await fs.writeFile(storePath(), JSON.stringify(projects, null, 2), 'utf8')
+  const temp = storePath() + '.tmp'
+  await fs.writeFile(temp, JSON.stringify(projects, null, 2), 'utf8')
+  await fs.rename(temp, storePath())
+}
+
+async function readSkills() {
+  try {
+    const value = JSON.parse(await fs.readFile(registryPath(), 'utf8'))
+    return Array.isArray(value) ? value : []
+  } catch (error) {
+    if (error.code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function writeSkills(skills) {
+  await fs.mkdir(skillsRoot(), { recursive: true })
+  const temp = registryPath() + '.tmp'
+  await fs.writeFile(temp, JSON.stringify(skills, null, 2), 'utf8')
+  await fs.rename(temp, registryPath())
+}
+
+function skillId(name) {
+  const id = String(name || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64)
+  if (!id) throw new Error('Skill name is invalid.')
+  return id
+}
+
+function parseSkill(content, fallback = '') {
+  const end = content.indexOf(String.fromCharCode(10) + '---')
+  //'\\n---')
+  const match = content.startsWith('---') && end >= 0 ? { 0: content.slice(0, end + 4), 1: content.slice(4, end).replace(/^\\r?\\n/, '') } : null
+  ///^\\uFEFF?---\\r?\\n([\\s\\S]*?)\\r?\\n---[ \\t]*(?:\\r?\\n|$)/)
+  const lines = (match?.[1] || '').split(String.fromCharCode(10))
+  const get = key => {
+    const line = lines.find(item => item.startsWith(`${key}:`))
+    return line ? line.slice(key.length + 1).trim().replace(/^['\"]|['\"]$/g, '') : ''
+  }
+  const name = get('name') || fallback
+  const description = get('description')
+  if (!name || !description) throw new Error('SKILL.md requires name and description frontmatter.')
+  return { name, description, body: match ? content.slice(match[0].length).trim() : content.trim() }
+}
+
+async function skillsWithUsage() {
+  const [skills, projects] = await Promise.all([readSkills(), readProjects()])
+  return skills.map(skill => ({ ...skill, projects: projects.filter(project => (project.enabledSkillIds || []).includes(skill.id)).map(project => ({ id: project.id, name: project.name })) }))
+}
+
+async function copySkillFolder(source, destination) {
+  const stat = await fs.lstat(source)
+  if (stat.isSymbolicLink()) throw new Error('Symbolic links are not allowed in imported skills.')
+  if (stat.isDirectory()) {
+    await fs.mkdir(destination, { recursive: true })
+    for (const entry of await fs.readdir(source, { withFileTypes: true })) {
+      if (['node_modules', '.git', '.venv', '__pycache__'].includes(entry.name)) continue
+      await copySkillFolder(path.join(source, entry.name), path.join(destination, entry.name))
+    }
+  } else if (stat.isFile()) {
+    await fs.mkdir(path.dirname(destination), { recursive: true })
+    await fs.copyFile(source, destination)
+  }
+}
+
+async function syncProjectSkills(project) {
+  const skillsDir = path.join(project.path, '.claude', 'skills')
+  await fs.mkdir(skillsDir, { recursive: true })
+  const registry = await readSkills()
+  const enabled = new Set(project.enabledSkillIds || [])
+  for (const skill of registry) {
+    const target = path.join(skillsDir, skill.name.replace(/[^a-zA-Z0-9._-]+/g, '-'))
+    if (enabled.has(skill.id)) {
+      try { await fs.lstat(target); continue } catch {}
+      await fs.symlink(path.join(skillsRoot(), skill.id), target, process.platform === 'win32' ? 'junction' : 'dir')
+    } else {
+      try { const stat = await fs.lstat(target); if (stat.isSymbolicLink()) await fs.unlink(target) } catch {}
+    }
+  }
 }
 
 function send(channel, payload) {
@@ -96,7 +160,14 @@ async function resetStaleProjects() {
 }
 
 function registerIpc() {
-  ipcMain.handle('app:info', () => ({
+  ipcMain.handle('app:update-check', async () => {
+      if (!app.isPackaged) return { status: 'development' }
+      const result = await autoUpdater.checkForUpdates()
+      return { status: 'checking', version: result?.updateInfo?.version || null }
+    })
+    ipcMain.handle('app:update-download', async () => { await autoUpdater.downloadUpdate(); return { downloaded: true } })
+    ipcMain.handle('app:update-install', () => { autoUpdater.quitAndInstall(); return { installing: true } })
+    ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     electron: process.versions.electron,
     node: process.versions.node,
@@ -104,6 +175,75 @@ function registerIpc() {
     arch: process.arch,
   }))
   ipcMain.handle('projects:list', readProjects)
+    ipcMain.handle('skills:list', skillsWithUsage)
+    ipcMain.handle('skills:choose-folder', async () => {
+      const result = await dialog.showOpenDialog(mainWindow, { title: 'Import skill folder', properties: ['openDirectory'] })
+      return result.canceled ? null : (result.filePaths[0] || null)
+    })
+    ipcMain.handle('skills:read', async (_event, id) => {
+      const skill = (await readSkills()).find(item => item.id === id)
+      if (!skill) throw new Error('Skill not found.')
+      const parsed = parseSkill(await fs.readFile(path.join(skillsRoot(), id, 'SKILL.md'), 'utf8'), skill.name)
+      return { ...skill, content: parsed.body }
+    })
+    ipcMain.handle('skills:save', async (_event, input) => {
+      if (!input || typeof input.name !== 'string' || typeof input.description !== 'string' || typeof input.content !== 'string') throw new Error('Invalid skill details.')
+      const name = input.name.trim(), description = input.description.trim(), body = input.content.trim()
+      if (!name || !description || !body) throw new Error('Name, description and instructions are required.')
+      const id = input.id ? skillId(input.id) : skillId(name)
+      const registry = await readSkills(), existing = registry.find(item => item.id === id)
+      if (registry.some(item => item.id !== id && item.name.toLowerCase() === name.toLowerCase())) throw new Error('Skill already exists.')
+      const dir = path.join(skillsRoot(), id), temp = dir + '.tmp-' + crypto.randomUUID(), backup = dir + '.backup'
+      await fs.mkdir(temp, { recursive: true })
+      const yaml = value => value.replace(/\\/g, '\\\\').replace(/\"/g, '\\\"').replace(/\r?\n/g, ' ')
+      await fs.writeFile(path.join(temp, 'SKILL.md'), `---\nname: "${yaml(name)}"\ndescription: "${yaml(description)}"\n---\n\n${body}\n`, 'utf8')
+      await fs.writeFile(path.join(temp, 'metadata.json'), JSON.stringify({ category: String(input.category || 'General') }, null, 2), 'utf8')
+      await fs.rm(backup, { recursive: true, force: true })
+      try {
+        if (existing) await fs.rename(dir, backup)
+        await fs.rename(temp, dir)
+        await writeSkills([...registry.filter(item => item.id !== id), { id, name, description, category: String(input.category || 'General'), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() }])
+        await fs.rm(backup, { recursive: true, force: true })
+      } catch (error) { await fs.rm(dir, { recursive: true, force: true }); try { await fs.rename(backup, dir) } catch {}; await fs.rm(temp, { recursive: true, force: true }); throw error }
+      return skillsWithUsage()
+    })
+    ipcMain.handle('skills:import', async (_event, source) => {
+      if (typeof source !== 'string' || !path.isAbsolute(source)) throw new Error('Invalid skill folder.')
+      const parsed = parseSkill(await fs.readFile(path.join(source, 'SKILL.md'), 'utf8'), path.basename(source))
+      const id = skillId(parsed.name), registry = await readSkills()
+      if (registry.some(item => item.id === id)) throw new Error('Skill already exists.')
+      await fs.mkdir(skillsRoot(), { recursive: true })
+      const temp = path.join(skillsRoot(), id + '.tmp-' + crypto.randomUUID()), dest = path.join(skillsRoot(), id)
+      await copySkillFolder(source, temp)
+      try { await fs.rename(temp, dest); await writeSkills([...registry, { id, name: parsed.name, description: parsed.description, category: 'Imported', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]) }
+      catch (error) { await fs.rm(dest, { recursive: true, force: true }); await fs.rm(temp, { recursive: true, force: true }); throw error }
+      return skillsWithUsage()
+    })
+    ipcMain.handle('skills:delete', async (_event, id) => {
+      const registry = await readSkills(), skill = registry.find(item => item.id === id)
+      if (!skill) throw new Error('Skill not found.')
+      const projects = await readProjects(), affected = projects.filter(project => (project.enabledSkillIds || []).includes(id))
+      const dir = path.join(skillsRoot(), id), trash = dir + '.deleted-' + crypto.randomUUID()
+      await fs.rename(dir, trash)
+      try {
+        await writeProjects(projects.map(project => ({ ...project, enabledSkillIds: (project.enabledSkillIds || []).filter(value => value !== id) })))
+        await writeSkills(registry.filter(item => item.id !== id))
+        await fs.rm(trash, { recursive: true, force: true })
+      } catch (error) { try { await fs.rename(trash, dir) } catch {}; await writeProjects(projects); await writeSkills(registry); throw error }
+      return { skills: await skillsWithUsage(), affectedProjects: affected.map(project => project.name) }
+    })
+    ipcMain.handle('projects:skills:set', async (_event, { id, skillIds }) => {
+      if (!Array.isArray(skillIds)) throw new Error('Invalid skill selection.')
+      if (processes.has(id)) throw new Error('Stop project before changing skills.')
+      const [projects, registry] = await Promise.all([readProjects(), readSkills()]), project = projects.find(item => item.id === id)
+      if (!project) throw new Error('Project not found.')
+      const valid = new Set(registry.map(item => item.id)), enabledSkillIds = [...new Set(skillIds)].filter(value => valid.has(value))
+      const next = projects.map(item => item.id === id ? { ...item, enabledSkillIds } : item)
+      await syncProjectSkills({ ...project, enabledSkillIds })
+      await writeProjects(next)
+      send('projects:changed', next)
+      return next
+    })
   ipcMain.handle('projects:choose-folder', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Choose a project folder',
@@ -127,6 +267,9 @@ function registerIpc() {
       id: crypto.randomUUID(),
       name: path.basename(projectPath),
       path: projectPath,
+        enabled: true,
+        allowAllCommands: input.allowAllCommands !== false,
+        enabledSkillIds: [],
       status: 'ready',
     }, ...projects]
     await writeProjects(next)
@@ -134,7 +277,17 @@ function registerIpc() {
     return next
   })
 
-  ipcMain.handle('projects:remove', async (_event, id) => {
+  ipcMain.handle('projects:set-enabled', async (_event, { id, enabled }) => {
+      if (typeof enabled !== 'boolean') throw new Error('Invalid enabled value.')
+      if (processes.has(id)) throw new Error('Stop the project before changing its enabled state.')
+      const projects = await readProjects()
+      const next = projects.map(project => project.id === id ? { ...project, enabled } : project)
+      await writeProjects(next)
+      send('projects:changed', next)
+      return next
+    })
+
+    ipcMain.handle('projects:remove', async (_event, id) => {
     if (processes.has(id)) throw new Error('Stop this project’s MCP server before removing it.')
     const next = (await readProjects()).filter(item => item.id !== id)
     await writeProjects(next)
@@ -149,10 +302,16 @@ function registerIpc() {
     const project = projects.find(item => item.id === id)
     if (!project) throw new Error('Project not found.')
 
-    const cliPath = app.isPackaged
+    if (project.enabled === false) throw new Error('This project is disabled. Enable it before starting.')
+      const skillHome = skillsRoot()
+      await fs.mkdir(skillHome, { recursive: true })
+      await syncProjectSkills(project)
+      const cliPath = app.isPackaged
       ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'jecbridge', 'src', 'cli.js')
       : path.join(__dirname, '..', 'node_modules', 'jecbridge', 'src', 'cli.js')
-    const nodeCommand = process.env.JECBRIDGE_NODE || 'node'
+    const nodeCommand = app.isPackaged
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node', 'bin', 'node.exe')
+        : path.join(__dirname, '..', 'node_modules', 'node', 'bin', 'node.exe')
 
     try {
       await fs.access(cliPath)
@@ -160,15 +319,22 @@ function registerIpc() {
       throw new Error('JecBridge CLI was not found. Reinstall the application or its dependencies.')
     }
 
-    await assertSupportedNode(nodeCommand)
+    try {
+        await fs.access(nodeCommand)
+      } catch {
+        throw new Error('The bundled Node.js runtime was not found. Reinstall JecBridge Desktop.')
+      }
 
       // Persist the transitional state before spawning to avoid a fast URL event being overwritten.
     await updateProject(id, { status: 'starting', url: undefined })
 
     let child
     try {
-      child = spawn(nodeCommand, [cliPath, project.path, '--tunnel'], {
+      const args = [cliPath, project.path, '--tunnel']
+      if (project.allowAllCommands !== false) args.push('--allow-all-commands')
+      child = spawn(nodeCommand, args, {
         cwd: project.path,
+          env: { ...process.env, JECBRIDGE_HOME: skillHome },
           detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -266,7 +432,15 @@ app.whenReady().then(async () => {
   await resetStaleProjects()
   registerIpc()
   createWindow()
-  app.on('activate', () => {
+  autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.on('update-available', info => send('app:update-status', { status: 'available', version: info.version }))
+    autoUpdater.on('update-not-available', () => send('app:update-status', { status: 'latest' }))
+    autoUpdater.on('download-progress', progress => send('app:update-status', { status: 'downloading', percent: Math.round(progress.percent) }))
+    autoUpdater.on('update-downloaded', info => send('app:update-status', { status: 'downloaded', version: info.version }))
+    autoUpdater.on('error', error => send('app:update-status', { status: 'error', message: error.message }))
+    if (app.isPackaged) setTimeout(() => autoUpdater.checkForUpdates().catch(error => send('app:update-status', { status: 'error', message: error.message })), 5000)
+    app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 }).catch(error => {
